@@ -1,0 +1,98 @@
+name: Build TimescaleDB extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      pg_major:
+        description: PostgreSQL major version
+        type: choice
+        options: ['18', '17']
+        default: '18'
+      ext_version:
+        description: TimescaleDB version (e.g. 2.23.0)
+        required: true
+        type: string
+        default: '2.31.0'
+      distro:
+        type: choice
+        options: [trixie, bookworm]
+        default: trixie
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: tsdb-${{ inputs.ext_version }}-${{ inputs.pg_major }}-${{ inputs.distro }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/flipperdevices/postgres-extensions-containers-timescaledb
+  EXT_VERSION: ${{ inputs.ext_version }}
+  PG_MAJOR: ${{ inputs.pg_major }}
+  DISTRO: ${{ inputs.distro }}
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate inputs
+        run: |
+          [[ "$EXT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::invalid ext_version: '$EXT_VERSION'"; exit 1; }
+
+      - id: ts
+        run: echo "ts=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ env.EXT_VERSION }}-${{ env.PG_MAJOR }}-${{ env.DISTRO }}
+            type=raw,value=${{ env.EXT_VERSION }}-${{ steps.ts.outputs.ts }}-${{ env.PG_MAJOR }}-${{ env.DISTRO }}
+          labels: |
+            org.opencontainers.image.title=timescaledb
+            org.opencontainers.image.version=${{ env.EXT_VERSION }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+
+      - name: Build and Push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: timescaledb/
+          push: true
+          provenance: false
+          build-args: |
+            PG_MAJOR=${{ env.PG_MAJOR }}
+            EXT_VERSION=${{ env.EXT_VERSION }}
+            DISTRO=${{ env.DISTRO }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=tsdb-${{ env.PG_MAJOR }}-${{ env.DISTRO }}
+
+      - name: Summary
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            echo "### TimescaleDB ${EXT_VERSION} / PG${PG_MAJOR} / ${DISTRO}"
+            echo '```text'
+            echo "$TAGS"
+            echo "${IMAGE}@${DIGEST}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
