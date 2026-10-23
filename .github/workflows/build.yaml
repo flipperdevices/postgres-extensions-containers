@@ -86,11 +86,19 @@ jobs:
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
           DIGEST: ${{ steps.push.outputs.digest }}
+          TS: ${{ steps.ts.outputs.ts }}
         run: |
+          REF="${IMAGE}:${EXT_VERSION}-${TS}-${PG_MAJOR}-${DISTRO}@${DIGEST}"
           {
             echo "### TimescaleDB ${EXT_VERSION} / PG${PG_MAJOR} / ${DISTRO}"
             echo '```text'
             echo "$TAGS"
             echo "${IMAGE}@${DIGEST}"
+            echo '```'
+            echo "#### ImageCatalog entry"
+            echo '```yaml'
+            echo "        - name: timescaledb"
+            echo "          image:"
+            echo "            reference: ${REF}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
